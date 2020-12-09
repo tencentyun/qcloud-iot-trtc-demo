@@ -1,0 +1,508 @@
+腾讯实时音视频（TRTC）服务端SDK对接说明
+版本 v1.0
+作者 白鲸（微信昵称）
+================================================================================
+
+
+前言: 本说明面向的读者
+  本说明面向的是c/c++后台开发工程师或架构师。主要介绍TRTC的基本概念，房间，混流，录制等组件能力以及限制，
+推课，单流录制，混流录制等应用场景的对接说明三大部分组成。帮助您理解和使用SDK能力。
+
+  若您是java 或 go 后台开发，我们提供基于SWIG技术的java 和 go的接口封装自动生成脚本，接口和c++ 接口是
+一一对应的，可以参考c++示例对接。请阅读第4部分。
+
+  关于服务部署需要注意的事项，放在了第5部分。
+
+------------------------  第一部分  ---------------------------------------------------
+1. TRTC基本概念
+    TRTC 是腾讯实时音视频（Tencent Real-time Conmunication）的缩写。将对以下几个概念做说明
+     -  应用ID （sdkappid）
+     -  房间ID （roomid）
+     -  用户ID （userid）
+     -  用户票据 （usersig）
+     -  角色 （clientrole）
+    括号里面的英文，和代码里面是一致的，可能大小写有写差异，代表相同的概念。详细的概念可以阅读
+  文档https://cloud.tencent.com/document/product/647/17230
+
+1.1 sdkappid
+    sdkappid 是腾讯云后台用来区分不同实时音视频应用的唯一标识，在实时音视频控制台 
+  创建应用时自动生成。不同SDKAPPID之间的数据不互通。
+
+1.2 roomid
+    roomid 是音视频房间，对应于现实世界的会议房间，房间内每个人都能收到其它人的音视频。
+
+1.3 userid
+    userid 用于在一个实时音视频应用中唯一标识一个用户。在线的用户，都必须保持唯一性。
+
+1.4 usersig
+    usersig 用于对一个用户进行登录鉴权认证，确认用户是否真实。用户签名生成方法可参考生成签名文档。
+
+1.5 clientrole
+    clientrole 房间用户的角色，可以取 主播 或 观众。主播，既可以上行音视频又可以下行音视频；观众
+  不可以上行音视频，只能下行音视频。一般直播场景用 主播角色，录制场景下用 观众角色。主播角色是会
+  被房间其他人感知的，观众角色不会被房间其他人感知，所谓感知，其他人能够收到你进出房间的通知。
+
+    以上概念用错可能会导致一下问题。
+
+    问题1. 房间号明明是一样的，怎么没有看到对方呢？
+      这时首先需要确认，对方和自己使用的sdkappid是否是同一个，sdkappid要求必须是相同的，初次对接
+    过程中很容易忽略这个点。
+      其次，确认房间号采用的是否都是uint32表示的数字，如果一个用字符串一个用数字，在TRTC服务端
+    看来是两个房间。举例 sdkappid都是 1400100001  房间A 10001 房间B是 "10001"，房间B会被
+    映射成其它数字比如是30002。
+
+    问题2. 我只是在录制为何，其它人能看到我？
+      这个问题是角色设置的问题，设置成观众就好了。
+
+    问题3. 我进房失败了？
+      可能的原因是网络问题，不通特别是公司内网有防火墙限制。另外也很可能是usersig票据异常。目前
+    支持两套票据，一套基于数字签名的RSA算法（推荐），一套是基于HMac SHA-256的。对应的签名生成接口
+    HMac是新增的，接口有一个v2的后缀。
+
+------------------------  第二部分  ---------------------------------------------------
+2. TRTC组件功能介绍
+  主要提供的组件有
+  - 房间组件（ITRTCCloud）TRTC基本概念提到的都和这个组件有关。主要职责收发音视频数据。
+  - 混流组件（ITRTCMediaMixer）主要职责将多路音视频流按布局要求混成一路。
+  - 录制组件（ITRTCMediaRecorder）主要职责将一路音视频录制成文件。
+
+    音频帧的要求限制这里统一说明一下：
+    1. 音频 所有组件PCM格式 都只支持 48k采样率，16位深度， 单声道 和 20ms帧长的音频帧。ITRTCCloud
+           额外支持AAC格式的回调，采样率是48k，16位深度，单声道和 21ms左右的帧长（1024个音频采样点）
+
+2.1 ITRTCCloud
+ 实时音视频房间组件的输入、输出、控制和接口调用依赖示意图：
+
+                            1.enterRoom     6.exitRoom
+                                |             |             0.setCallback
+                                |             |                 |
+                                |             |                 |
+                          +-----v-------------v------------------------+
+                          |                                     |      |
+                          |                                     |      +--2.onError------------------b-->
+                          |                                     |      |
+                          |                                     |      +--2.onEnterRoom--------------b-->
+                          |                                     |      |
+ +-3.sendCustomAudioData-->                                     |      +--7.onExitRoom---------------b-->
+                          |                                     |      |
+                          |                                     |      +--3.onUserEnter--------------a-->
+ +-4.sendCustomVideoData->---------(depend on)------------+  callback--+
+                          |                               |            +--3.onUserExit---------------a-->
+                          |                               |            |
+ +-4.sendAuxVideoData---->---------(depend on)-------------------+     +--3.onUserVideoAvailable-----a-->
+                          |                               |      |     |
+                          |                               |      |     +--3.onUserAudioAvailable-----a-->
+ +-3.sendSEIMsg----------->                               |      |     |
+                          |                               |      |     +--3.onUserSubStreamAvailable-a-->
+                          |                               |      |     |
+ +-3.sendCustomCmdMsg----->              +--(ctrl)+------------------->--+5.onRecvVideoFrame---------c-->
+                          |              |        |       |      |     |
+                          |    +--(ctrl)------------------------------>--+5.onRecvAudioFrame---------a-->
+                          |    |         |        |       |      |     |
+                          |    |         |        |       |      |     +--3.onRecvSEIMsg-------------a-->
+                          |    |         |        |       |      |     |
+                          |    |         |        |       |      |     +--3.onRecvCustomCmdMsg-------a-->
+                          |    |         |        |       |      |     |
+                          |    |         |        |       |      |     +--3.onMissCustomCmdMsg-------a-->
+                          |    |         |        |       |      |     |
+                          |    |         |        |       |      |     |
+                          |    |         |        |       |      |     |
+                          |    |         |        |       v      v     |
+                          +--------------------------------------------+
+                               |         |        |       |      |
+                               |         |        |       |      |
+                               |         |        |       |      |
+                               +         |        |       |      |
+          4.setRemoteAudioRecvCallback   |        |       |      |
+                                         +        |       |      |
+                   4.setRemoteVideoRecvCallback   |       |      |
+                                                  +       |      |
+                          4.setRemoteSubStreamRecvCallback|      |
+                                                          +      |
+                                        3.setVideoEncoderParam   |
+                                                                 +
+                                                      3.setAuxVideoEncoderParam
+
+【房间接口调用时序说明】
+   上图所示接口名前面的序号，代表生命期节点，序号值大的调用时序要晚于序号小的。比如图示中
+3.setVideoEncoderParam 和 4.sendCustomVideoData 表示先设置视频编码参数，才能发送视频数据。
+下面对序号含义做一个简单说明：
+ 0. 表示创建组件和初始化化，设置事件回调参数。
+ 1. 表示开始进房
+ 2. 表示进房成功
+ 3. 表示在房间中，可以做很多操作，发音频数据（前提得是主播），收房间事件通知等
+ 4. 表示视频发送
+ 5. 表示音视频接收
+ 6. 表示退房
+ 7. 表示退房成功通知
+
+【回调函数所在线程说明】
+ 标号相同说明是是在同一个线程回调的。
+ 线程 a: TRTC工作线程。
+ 线程 b: TRTC网络线程。
+ 线程 c: TRTC视频解码线程。
+
+
+ 【主要接口说明】
+  这里做简要说明，详细的说明可以查看对应的接口API注释。
+   1.setCallback
+     设置事件回调，组件在要销毁的时候，请传nullptr参数，来取消监听。
+     void setCallback(ITRTCCloudCallback* callback)
+
+   2.enterRoom
+     请求进房，重点注意进房的参数，建议加一行日志，若没有加没关系，接口内部也有日志。一般提供日志
+     参数使用方面的问题，可以快速进行排查。
+     void enterRoom(const TRTCParams& params, TRTCAppScene scene)
+
+   3.setVideoEncoderParam
+     设置视频编码参数，要求在进房成功后 (onEnterRoom)，发送视频数据(sendCustomVideoData)前调用。
+     void setVideoEncoderParam(const TRTCVideoEncParam& params)
+
+   4.setAuxVideoEncoderParam
+     设置辅流视频编码参数，要求在进房成功后(onEnterRoom)，发送辅流视频数据(sendAuxVideoData)前调用。
+     void setAuxVideoEncoderParam(const TRTCVideoEncParam& params)
+
+   5.sendCustomAudioData
+     发送音频数据，要求在进房成功后（onEnterRoom）调用，格式必须是PCM 48k采样率，单声道，
+   20ms帧长 16位深度的数据。采样点个数（960，数据长度1920字节）。
+     int sendCustomAudioData(TRTCAudioFrame* frame)
+
+   6.sendSEIMsg
+     发送视频流消息，该消息嵌入在H264码流中发送，要求在进房成功后（onEnterRoom）调用，有一定的频率限制。
+     bool sendSEIMsg(const unsigned char* data, int datalen, int repeatcount)
+
+   7.sendCustomCmdMsg
+     发送信令消息，走的音视频数据通道，要求在进房成功后（onEnterRoom）调用，有一定的频率限制。
+     bool sendCustomCmdMsg(uint32_t cmdId, const unsigned char* msg, int msglen, bool reliable, bool ordered)
+
+   8.sendCustomVideoData
+     发送视频数据，要求在设置视频编码参数（setVideoEncoderParam）之后调用，格式必须是YUV420P，分辨率和帧率
+  setVideoEncoderParam的设置保持一致。
+     int sendCustomAudioData(TRTCAudioFrame* frame)
+
+   9.sendAuxVideoData
+     发送辅流视频数据，要求在设置视频编码参数（setVideoEncoderParam）之后调用，格式必须是YUV420P，分辨率和帧率
+  setVideoEncoderParam的设置保持一致。
+     int sendAuxVideoData(TRTCVideoFrame* frame)
+
+   10.setRemoteAudioRecvCallback
+     用于获取房间某人的音频数据的场景，要求在事件onUserEnter中调用。推荐用PCM格式，可以作为
+     混流或录制的输入。若有特别需求场景，也可以用AAC格式。对应的音频数据通过onRecvAudioFrame回调出来。
+     int setRemoteAudioRecvCallback(const char* userId, TRTCAudioFrameFormat audioFormat, ITRTCAudioRecvCallback* callback)
+
+   11.setRemoteVideoRecvCallback
+     用于获取房间某人的视频数据场景，要求在事件onUserEnter中调用。推荐用YUV420p格式可以作为
+   混流或录制的输入。若有特别需求场景，也可以用H264压缩格式。对应的音频数据通过onRecvVideoFrame回调出来。
+     int setRemoteVideoRecvCallback(const char* userId, TRTCVideoFrameFormat videoFormat, ITRTCVideoRecvCallback* callback)
+
+   12.setRemoteSubStreamRecvCallback
+     用于获取房间某人的视频数据场景，要求在事件onUserEnter中调用。推荐用YUV420p格式可以作为
+     混流或录制的输入。若有特别需求场景，也可以用H264压缩格式。对应的音频数据通过onRecvVideoFrame回调出来。
+     int setRemoteSubStreamRecvCallback(const char* userId, TRTCVideoFrameFormat videoFormat, ITRTCVideoRecvCallback* callback)
+
+   13.exitRoom
+     退出房间，任务完成后，请主动退出房间，完成资源回收。退房成功有 onExitRoom回调通知事件。
+     void exitRoom()
+
+【补充说明】
+   房间组件不支持多个房间实例，会导致程序不可用。若需要，请使用多进程版本。
+   单进程版本 链接libTrtcEngine.so 
+   多进程版本 链接libTrtcEngineIPC.so, 外加 SetIPCParam接口调用，主函数入口调用一次即可。
+   1. 指定子进程 TrtcCoreService 的程序路径
+   2. IPC 主工作目录
+
+【小结】
+  1. 房间组件等同于实时音视频的数据通道
+  2. 支持向房间推流
+  3. 支持从房间获取指定远程用户的数据
+  4. 房间人员变化有事件通知（限主播，普通观众不会被通知）
+ 
+
+2.2 ITRTCMediaMixer
+混流组件 输入、 输出、 流程控制 图示说明：
+
+                  1.setCanvas  2.start  8.stop   0.setCallback
+                         |         |     |        |
+                         |         |     |        |
+                         |         |     |        |
+                   +-----v---------v-----v---------------+
+                   |                              |      |
+                   |                              |      |
+                   |                              |      |
+ 6.-addAudioFrame-->                              |      +---7.onMixedAudioFrame--------a---->
+                   |                              |      |
+                   |                              v      |
+                   |                           callback--+
+                   |                                     |
+ 6.-addVideoFrame-->                                     +---7.onMixedVideoFrame--------a---->
+                   |                                     |
+                   |                                     |
+                   |                                     |
+                   |                                     |
+                   +------^--------^-----------^---------+
+                          |        |           |
+                3.clearRegions     |           |
+                                   |           |
+                              4.setRegion      |
+                                               |
+                                        5.applyRegions
+
+【混流接口调用时序说明】
+ 0. 创建并初始化，设置回调参数。
+ 1. 设置画布，指定混图的帧率，分辨率，背景色。必须在启动混流线程之前。
+ 2. 启动混流线程，混流线程会根据设置的参数，和送进来的音视频数据，完成混流，再回调出来。
+ 3. 清除缓存的布局
+ 4. 设置缓存的布局
+ 5. 应用缓存的布局，3和4的操作，不影响混流线程的运行，5的操作会在混流的下一个周期立即生效。
+    3、4、5.主要用于动态更新布局。分3个接口主要防止混流和布局更新冲突，出现中间异常状态，导致混图
+    不合预期
+ 6. 送音视频数据。必须和布局里面的流id一致。
+ 7. 混流回调，每次一帧的数据。
+ 8. 停止混流。内部会清除数据缓存和布局信息，一切回归到初始化状态，除了画布信息。
+
+【线程说明】
+ 线程 a 是混流线程。混流示例就一个混流线程。
+
+【主要接口说明】
+ 这里做简要说明，详细的说明可以查看对应的接口API注释。
+ 1. setCallback
+ 设置回调，请在组件销毁前，再调用一次传参 nullptr 取消回调。
+ void setCallback(ITRTCMediaMixerCallback* callback)
+
+ 2. setCanvas
+ 设置画布，要求在start前调用。否则不会生效。fps 内部限制最大30fps 分辨率限制 720p。
+ int setCanvas(int fps, int width, int height, int bgcolor)
+
+ 3. start
+ 启动混流线程，要求在setCanvas之后调用。若只混音频或视频，相应的addAudioFrame和addVideoFrame
+ 也要配合使用。比如不混图，建议就不要调用addVideoFrame，虽然addVideoFrame函数内部会返回失败。
+ int start(bool enableAudio, bool enableVideo)
+
+ 4. clearRegions
+ 清除缓存的布局信息。 可以在start前调用更新布局和start不冲突。操作需要applyRegions调用才生效
+ int clearRegions()
+
+ 5. setRegion
+ 设置混图区域信息到缓存的布局里面。可以在start前调用更新布局和start不冲突。操作需要applyRegions
+ 调用才生效
+ int setRegion(char* id, Region* region)
+
+ 6. applyRegions
+ 使缓存的布局信息生效。
+ int applyRegions()
+
+ 7. addAudioFrame
+ 添加要混的音频数据，格式要求PCM，48k采样率 16位深度 20ms帧长 单声道。
+ int addAudioFrame(char* id, TRTCAudioFrame* frame)
+
+ 8. addVideoFrame
+ 添加要混的视频数据，格式要求YUV420p。输入的分辨率和要求混的输出分辨率不一致时会进行缩放裁剪等操作。
+ int addVideoFrame(char* id, TRTCVideoFrame* frame)
+
+ 9. stop
+ 停止混流线程，内部状态会重置，除了画布的信息。如需要变更请调用setCanvas接口。
+ int stop()
+
+【补充说明】
+ 混流组件本质上是一个多流输入，单流输出的处理器。输入音视频格式分别为PCM和YUVYUV420p 输出也是
+ PCM和YUV420pYUV420p内部是一个多缓存队列结构，每一个对应一条流，同一条流混之前会进行音画同步，
+ 视频对齐音频。若某条流音频缺失，则用静音帧代替。若是视频缺失，则用上次已经混过的视频帧代替，
+ 若连视频帧都没有，当前流视频不参与混图。
+ 布局设置采用了缓存设置，只有等到设置ok了，通过applyRegions生效。
+
+【小结】
+ 1. 典型的一路输入流是包含一路音频和一路视频
+ 2. 混流模块是多路流输入，单流输出
+ 3. 混流模块拥有一个内部线程，通过start/stop 控制启动和停止
+ 4. 混流模块会自动补帧（发生在输入流缺帧的时候），确保输出的流pts是平稳的，不会缺数据
+ 5. 混流模块针对画面有缩放能力，能应对输入分辨率变化的情况
+
+2.3 ITRTCMediaRecorder
+
+   录制组件 输入、 输出、 流程控制图示说明：
+
+                   1.setParam 3.stop 3.stopAll 0.setCallback
+                         +        +     +         +
+                         |        |     |         |
+                         |        |     |         |
+                    +----v--------v-----v---------------+
+                    |                             |     |
+                    |                             |     |
+                    |                             |     |
+ --2.addAudioFrame-->                             |     |
+                    |                             v     |
+                    |                         callback  +-4.onFinished--->
+                    |                                   |
+                    |                                   |
+ --2.addVideoFrame-->                                   |
+                    |                                   |
+                    |                                   |
+                    +-----------------------------------+
+
+【录制接口调用时序说明】
+ 0. 初始化后，设置回调参数
+ 1. 设置录制参数
+ 2. 送药录制的音视频数据，不同流用id区分。
+ 3. 停止录制
+ 4. 回调录制结果
+
+【线程说明】
+ onFinished 和 stop、 stopAll调用是在同一个线程。
+
+【主要接口说明】
+ 1. setCallback
+ 设置回调
+ 2. setParam
+ 设置录制参数
+ 3. addAudioFrame
+ 音频数据输入接口， 音频要求PCM 48k 单声道 16位 20ms帧长，时间戳单调递增。
+ 4. addVideoFrame
+ 视频数据输入接口， 视频要求YUV420p 或者Gop模式的H264码流，每个I帧需要sps+pps。另外分辨率都要
+ 固定，时间戳单调递增。
+ 5. stop
+ 停止某条流的录制
+ 6. stopAll
+ 停止所有流的录制
+
+【补充说明】
+ 录制模块，可以同时录制多条流，每条流支持纯音频，纯视频，和音视频3种。每一个录制文件都有一个线程
+ 完成编码和封装，编码音频AAC格式，视频H264格式，封装的格式是flv。录制完成后会生成flv后缀的文件。
+ 若需要可以ffmpeg 转封装成其他格式如 MP4。
+ 关于音画同步，是由送入的音视频的时间戳同步决定的。使用者有义务保证，音视频对应的时间戳是同步的。
+
+【小结】
+ 1. 典型的一路输入流是包含一路音频和一路视频
+ 2. 录制模块支持多路流并发录制，录制以流为单位，同一个流的录制到同一个文件中。
+ 3. 录制模块针对同一个流，支持纯音频，纯视频和音视频在一起的录制，也支持同时录制以上文件。
+ 4. 录制模块只做数据编码 + flv 文件封装。
+
+------------------------  第三部分  ---------------------------------------------------
+3. 分应用场景的对接说明
+  - TRTC房间混流录制场景
+  - 推课场景
+  - 转推场景
+
+3.1 TRTC房间混流录制场景
+  TRTC是基于SFU架构的实时音视频引擎，即房间每一个用户，在下行方看来都是一路流。可以用userid来标识
+  混流录制就是需要间房间里的用户的流，全部或部分，经指定的布局，混合后，再进行录制的过程。我们可以
+  基于 ITRTCCloud， ITRTCMediaMixer 和 ITRTCMediaRecorder 来完成任务。
+
+   混流录制架构关系图：
+   +--------------+                     +-----------------+                    +----------------------+
+   |              |                     |                 |                    |                      |
+   |        onRecvAudioFrame +--+ addAudioFrame     onMixedAudioFrame +--+ addAudioFrame              |
+   |              |                     |                 |                    |                      |
+   |  ITRTCCloud  |                     | ITRTCMediaMixer |                    | ITRTCMediaRecorder   |
+   |              |                     |                 |                    |                      |
+   |        onRecvVideoFrame +--+ addVideoFrame     onMixedVideoFrame +--+ addVideoFrame              |
+   |              |                     |                 |                    |                      |
+   +--------------+                     +-----------------+                    +----------------------+
+
+  注意：
+   1. 房间的音频回调采用PCM格式。
+   2. 视频回调采用YUV420p格式。
+
+  建议：
+   1. 将混流录制实现成worker程序。
+   2. 实现一个dispatcher进程，根据请求，创建worker进程进程录制任务。
+   3. 合理的评估带宽和机器性能。因涉及的视频编码。建议选择CPU好点的机器。
+   4. 单机并发房间录制任务评估，CPU主要影响因素有 机器配置情况，录制任务的视频分辨率，视频路数。
+      从录制任务的角度看，要录制的分辨率越高，路数越多，cpu占用越高。
+      建议在实际的机器上，运行录制任务，以实际测试为准。单机机器CPU 要留30%的余量，切不可跑满。
+
+
+------------------------  第四部分  ---------------------------------------------------
+4. java 和 go 后台开发对接指引
+  采用SWIG技术，自动将 TRTC提供的c++接口 封装成其他语言的接口。转换后的接口原型和C++接口一一对应。可以参考
+C++接口说明。
+  确保机器上安装了swig程序。CentOS系统 运行命令 >yum install swig 进行安装
+  确保机器上有JDK环境推荐JDK版本1.8+。
+
+4.1 java接口
+  在java目录下有一个 convert.sh，完成转换和库的编译。运行前确保安装了swig程序。
+  生成java接口文件在java/src目录下，和c++文件在java目录下。
+  运行会警告错误，可以忽略，那是swig 不支持赋值重载接口的转换。不影响使用。
+  
+4.1.1 生成的java的包名如何修改？
+  生成java的包名是通过 swig命令的 -package 参数指定的。默认是com.tencent。可以改为您自己的包名，然后再执行
+  convert.sh，生成的java源文件再src目录下。
+  附 convert.sh 中的 swig命令: "swig -c++ -java -package com.tencent -outdir src -I recordsdk.i"
+
+4.1.2 java 动态库如何加载？
+  这里会生成2个动态库libtrtcenginewarper.so 和 libtrtcengineipcwarper.so。
+  libtrtcenginewarper.so 依赖 /lib/libTrtcEngine.so 库。
+  libtrtcengineipcwarper.so 依赖 /lib/libTrtcEngineIPC.so 库。
+  /lib/libTrtcEngineIPC.so 在 /lib/libTrtcEngine.so 能力基础上，提供了多进程的支持，采用了进程间通信（IPC）技术实现。
+  
+  如果java主程序希望管理并发控制多个房间的录制任务，建议java 加载libtrtcengineipcwarper.so。 
+  确保libTrtcEngineIPC.so能被java主程序搜索到。推荐放置在/usr/lib 目录下（系统默认搜索路径）
+  或通过环境变量 LD_LIBRARY_PATH 给出libTrtcEngineIPC.so的所在路径。 
+  此外需要再java 程序入口处 调用SDK的SetIPCParam 接口，指定 /bin/TrtcCoreService 的绝对路径。TrtcCoreService
+  依赖 libTrtcEngine.so。因此也要确保libTrtcEngine.so 能被程序正确加载。
+  
+  如果一个java主程序只管理一个房间录制任务，建议java 加载libtrtcenginewarper.so。并确保libTrtcEngine.so 可以被搜索到。
+
+4.1.3 java 崩溃怎么办？
+  常见的一种错误。回调了一个已经被java回收的对象。具体原因说明：
+  SWIG 转换的接口，不增加对象的引用计数，导致函数内临时new出来的对象，退出函数后被GC回收，引起c++ 回调java崩溃。
+  回调接口的实现对象，要确保生命期足够长。推荐的做法，定义为类成员私有变量。而不是临时new出来。
+  错误用法示例：
+  public void InitRecorder(){
+        // 创建一个录制组件
+        this._itrtcMediaRecorder = trtcengine.createMediaRecorder();
+	// 创建录制回调处理对象
+        ITRTCMediaRecorderCallbackWrapper itrtcMediaRecorderCallbackWrapper = new ITRTCMediaRecorderCallbackWrapper(this);
+	// _itrtcMediaRecorder.setCallback 接口是SWIG生成的，不会增加对itrtcMediaRecorderCallbackWrapper对象的引用，函数退出后会被GC回收。
+        _itrtcMediaRecorder.setCallback(itrtcMediaRecorderCallbackWrapper);
+        _itrtcMediaRecorder.setParam(_sdkappid, roomId + "", userid, 4, "/home/vip/Videos/" + roomId);
+  }
+
+  修复后的版本：
+  public void InitRecorder(){
+        // 创建一个录制组件
+        this._itrtcMediaRecorder = trtcengine.createMediaRecorder();
+	// 创建录制回调处理对象
+        _itrtcMediaRecorderCallbackWrapper = new ITRTCMediaRecorderCallbackWrapper(this);
+	// _itrtcMediaRecorderCallbackWrapper 是成员变量，被引用，函数退出后不会被GC回收。
+        _itrtcMediaRecorder.setCallback(itrtcMediaRecorderCallbackWrapper);
+        _itrtcMediaRecorder.setParam(_sdkappid, roomId + "", userid, 4, "/home/vip/Videos/" + roomId);
+  }
+
+4.1.4 问题如何排查？
+  1. java 调试
+  2. sdk 日志，sdk日志可以通过setLogDirPath接口设置，日志按天存储，存放最近10天的，过期自动清理。日志中有清晰的进房参数打印，用于排查
+     进房类错误，也有混流，录制的关键日志打印，比如参数设置等。也能帮助定位问题。
+  
+  
+4.2 go接口
+  在go目录下有一个convert.sh。运行前确保安装了swig程序。
+  生成go接口文件再go/src目录下，和c++文件再go目录下。
+  运行会警告错误，可以忽略，那是swig 不支持赋值重载接口的转换。不影响使用。
+  运行go build 会包符号找不到的错误。那是应为虚回调接口需要用go根据业务需要封装。
+  需要您这边实现一下。
+
+------------------------  第五部分  ---------------------------------------------------
+5. 部署网络策略要求
+5.1上线前网络策略配置说明
+  详见：https://cloud.tencent.com/document/product/647/34399
+  LinuxSDK 需要访问腾讯实时音视频服务器，需要放过以下协议和端口
+  1. TCP协议	端口443，20166
+  2. UDP协议	端口8000
+
+  如果支持域名配置请允许以下域名
+  1. official.opensso.tencent-cloud.com
+  2. query.tencent-cloud.com
+  3. yun.tim.qq.com
+  4. mlvbdc.live.qcloud.com
+
+5.2 主程序退出前，建议sleep 5秒，让结束录制和退房的上报，成功上报上来。
+
+
+5.3 userSig签发SDK集成
+  详见：https://github.com/tencentyun/tls-sig-api.git 下面的README.md，按照指引安装集成。
+  两点说明：
+  1. 编译后会生成一个工具 tls_licence_tools 可以用于验证生成的userSig是否ok，若出错会有提示信息。
+  2. 提供了2个版本的接口
+     I. v1版本基于公私钥数字签名机制，对应的接口gen_sig()/tls_gen_signature_ex2_with_expire()
+     II. v2版本基于 HMAC机制（基于hash的消息验证码机制，hash函数 sha-256），对应接口 gen_sig_v2()
+  II 相对于 I，性能方面有很大提升，确保统一服务端签发，同时确保私钥不泄露，安全性方面也是OK的。

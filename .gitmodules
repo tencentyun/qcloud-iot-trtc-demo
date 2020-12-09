@@ -1,0 +1,3 @@
+[submodule "iot-explorer-c-sdk/sdk"]
+	path = iot-explorer-c-sdk/sdk
+	url = https://github.com/tencentyun/qcloud-iot-explorer-sdk-embedded-c.git
