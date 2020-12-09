@@ -1,10 +1,10 @@
 {
     "auth_mode": "KEY",
-    "productId": "FXY32IPORM",
+    "productId": "YOUR_PRODUCT_ID",
     "productSecret": "YOUR_PRODUCT_SECRET",
-    "deviceName": "dev001",
+    "deviceName": "YOUR_DEVICE_NAME",
     "key_deviceinfo": {
-        "deviceSecret": "2Lem40RCr4csaMYaQ0FT/Q=="
+        "deviceSecret": "YOUR_DEVICE_SECRET"
     },
     "cert_deviceinfo": {
         "devCertFile": "YOUR_DEVICE_CERT_FILE_NAME",
