@@ -565,15 +565,15 @@ static void _trtc_task_start(TRTCParams params, std::string file_path,
 
 int qcloud_iot_trtc_wrapper_init(void) {
   // 配置log路径
-  std::shared_ptr<LogCallback> log;
-  log.reset(new LogCallback());
+  // std::shared_ptr<LogCallback> log;
+  // log.reset(new LogCallback());
   setLogDirPath("/tmp/log");
   setConsoleEnabled(true);
   /// 用跨进程方案必须调用该方法。
-  std::string core = "./TrtcCoreService";
+  // std::string core = "./TrtcCoreService";
   /// rootpath 过长会导致进程间通信建立失败，推荐设置为/tmp 或者 /data 目录。
-  std::string rootpath = "/tmp";
-  setIPCParam((char *)core.c_str(), (char *)rootpath.c_str());
+  // std::string rootpath = "/tmp";
+  // setIPCParam((char *)core.c_str(), (char *)rootpath.c_str());
   return 0;
 }
 
