@@ -49,9 +49,6 @@ file(GLOB src_iot_trtc
 )
 add_library(libiot_trtc STATIC ${src_iot_trtc})
 
-# 设置依赖库
-file(GLOB lib_trtc ${CMAKE_SOURCE_DIR}/trtc_sdk/trtc_6.5.70/lib/*.so)
-
 # 编译生成可执行程序
 file(GLOB src_trtc_demo ${CMAKE_CURRENT_SOURCE_DIR}/sample/*.c)
 add_executable(trtc_demo ${src_trtc_demo})
@@ -59,4 +56,4 @@ target_link_libraries(trtc_demo  -Wl,--start-group libqrcode libiot_trtc TRTCEng
 
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/device_info.json DESTINATION ${EXECUTABLE_OUTPUT_PATH})
 file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/ruguo-640x360.mp4 DESTINATION ${EXECUTABLE_OUTPUT_PATH})
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/trtc_sdk/trtc_6.5.70/bin/TrtcCoreService DESTINATION ${EXECUTABLE_OUTPUT_PATH})
+#file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/trtc_sdk/trtc_6.5.70/bin/TrtcCoreService DESTINATION ${EXECUTABLE_OUTPUT_PATH})

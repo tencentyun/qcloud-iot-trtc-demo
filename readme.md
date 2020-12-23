@@ -1,16 +1,17 @@
 ## 安装依赖库
 
-```
+```bash
 apt-get install zlib1g zlib1g-dev
 ```
 
 ## 编译
-- 步骤2：执行如下命令，开始编译：
 
-    `/cmake_build.sh all`
+1. 执行如下命令，开始编译：
 
-- 步骤3：执行如下命令，运行demo;
-    ```
+    `./cmake_build.sh all`
+
+2. 执行如下命令，运行demo;
+    ```bash
     cd output/bin/
     ./trtc_sample
     ```
@@ -18,9 +19,10 @@ apt-get install zlib1g zlib1g-dev
 ## 运行
 
 TRTC demo运行步骤：
-1. 修改 `trtc_sample` 同级目录下的 device_info.json 文件三元组信息；
-2. 运行 `trtc_sample` 后出现二维码，使用腾讯连连软件进行绑定；
+1. 修改 `trtc_sample` 同级目录下的 `device_info.json` 文件三元组信息为 IoT Explorer 平台创建的设备信息
+2. 运行 `trtc_sample` 后出现二维码，使用腾讯连连小程序或者APP扫码进行绑定；
 3. 按回车后控制台出现如下界面：
+
 ```
 0: device active request video call!
 1: device active request audio call!

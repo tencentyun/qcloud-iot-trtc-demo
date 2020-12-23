@@ -510,7 +510,7 @@ int qcloud_iot_trtc_call(CallType type)
         return -1;
     }
 
-    if ((eCALL_IDLE != trtc_handle->video_call_status_now) && ((eCALL_IDLE != trtc_handle->audio_call_status_now))) {
+    if ((eCALL_IDLE != trtc_handle->video_call_status_now) || ((eCALL_IDLE != trtc_handle->audio_call_status_now))) {
         Log_e("device is busy!");
         return -1;
     }
